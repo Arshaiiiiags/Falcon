@@ -1,0 +1,31 @@
+{
+  "id": "/",
+  "name": "باشگاه بازی ایرانی · Persian Game Club",
+  "short_name": "Persian Club",
+  "description": "Pasur, backgammon and four-player Hokm with AI. Persian classics, a table of your own.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f5f4ef",
+  "theme_color": "#103f3b",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
