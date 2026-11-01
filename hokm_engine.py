@@ -68,6 +68,35 @@ def new_game(level='medium', rng=None):
     return st
 
 
+def _draw_hakem(rng):
+    """Party tables: teams are fixed by seat, so only Hakem is drawn (first face-up ace)."""
+    deck = list(ALL_CARDS)
+    rng.shuffle(deck)
+    reveals = []
+    for i, card in enumerate(deck):
+        reveals.append({'seat': i % 4, 'card': card})
+        if card[1:] == 'A':
+            return i % 4, reveals
+    raise RuntimeError('deck has no ace')
+
+
+def new_party_game(level='medium', humans=(0,), rng=None):
+    """Human-versus-human table. `humans` are the seats controlled by people; AI plays the rest.
+    Seats 0 and 2 are one team, 1 and 3 the other (partners sit opposite)."""
+    if level not in LEVELS:
+        raise ValueError('bad level')
+    humans = sorted({h for h in humans if type(h) is int and h in range(4)})
+    if not humans:
+        raise ValueError('no humans')
+    rng = rng or SR
+    hakem, reveals = _draw_hakem(rng)
+    st = dict(level=level, scores=[0, 0], target_score=TARGET, round=0, hakem=hakem,
+              identities=[0, 1, 2, 3], selection=reveals, round_log=[], finished=False,
+              winner=None, draw=False, moves_count=0, events=[], humans=humans, party=True)
+    _deal_hand(st, rng)
+    return st
+
+
 def choose_trump(state, seat, suit):
     if (state['finished'] or state['phase'] != 'choose_trump'
             or type(seat) is not int or seat != state['hakem']):
@@ -171,10 +200,10 @@ def continue_game(state, rng=None):
     return st
 
 
-def apply_move(state, card):
+def apply_move(state, card, seat=HUMAN):
     st = copy.deepcopy(state)
     st['events'] = []
-    _play(st, HUMAN, card)
+    _play(st, seat, card)
     return st
 
 
@@ -279,8 +308,9 @@ def choose_card(state, seat, level=None, rng=None):
 def play_ai_turns(state, rng=None):
     st = copy.deepcopy(state)
     rng = rng or SR
+    humans = st.get('humans', [HUMAN])
     for _ in range(5):
-        if st['finished'] or st['phase'] in ('trick_end', 'hand_end') or st['turn'] == HUMAN:
+        if st['finished'] or st['phase'] in ('trick_end', 'hand_end') or st['turn'] in humans:
             return st
         if st['phase'] == 'choose_trump':
             p = st['hakem']
@@ -301,6 +331,62 @@ def public_view(state):
                 can_choose_trump=not state['finished'] and state['phase'] == 'choose_trump' and state['hakem'] == HUMAN,
                 can_continue=not state['finished'] and state['phase'] in ('trick_end', 'hand_end'))
     return view
+
+
+def _rot_trick(entry, shift):
+    if entry is None:
+        return None
+    entry['winner'] = (entry['winner'] - shift) % 4
+    for p in entry['cards']:
+        p['seat'] = (p['seat'] - shift) % 4
+    return entry
+
+
+def public_view_for(state, seat, names=None):
+    """What `seat` may see, re-indexed so the viewer is always seat 0 (partner = 2). The browser
+    table therefore needs no seat arithmetic. When the shift is odd the two teams swap, so
+    team 0 is always the viewer's team. Other players' hands are never included."""
+    if type(seat) is not int or seat not in range(4):
+        raise ValueError('bad seat')
+    keys = ('level', 'round', 'hakem', 'dealer', 'turn', 'leader', 'phase', 'trump', 'tricks',
+            'scores', 'target_score', 'finished', 'winner', 'draw', 'moves_count',
+            'selection', 'round_log', 'trick', 'last_trick', 'trick_history', 'events')
+    v = {key: copy.deepcopy(state[key]) for key in keys}
+    shift, flip = seat, seat % 2 == 1
+    sh = lambda x: None if x is None else (x - shift) % 4
+    for key in ('hakem', 'dealer', 'turn', 'leader'):
+        v[key] = sh(v[key])
+    for p in v['trick'] + v['selection']:
+        p['seat'] = sh(p['seat'])
+    _rot_trick(v['last_trick'], shift)
+    for t in v['trick_history']:
+        _rot_trick(t, shift)
+    for e in v['events']:
+        for k in ('seat', 'winner'):
+            if k in e:
+                e[k] = sh(e[k])
+    for r in v['round_log']:
+        r['hakem'] = sh(r['hakem'])
+        if flip:
+            r['winner'] = 1 - r['winner']
+            r['tricks'].reverse()
+            r['scores'].reverse()
+    if flip:
+        v['scores'].reverse()
+        v['tricks'].reverse()
+        if v['winner'] is not None:
+            v['winner'] = 1 - v['winner']
+    counts = [len(h) for h in state['hands']]
+    humans = state.get('humans', [HUMAN])
+    v.update(identities=[0, 1, 2, 3], party=True,
+             hand=list(state['hands'][seat]), hand_counts=[counts[(i + shift) % 4] for i in range(4)],
+             legal_cards=legal_cards(state, seat), resigned=False,
+             can_choose_trump=not state['finished'] and state['phase'] == 'choose_trump' and state['hakem'] == seat,
+             can_continue=not state['finished'] and state['phase'] in ('trick_end', 'hand_end'),
+             kinds=['human' if (i + shift) % 4 in humans else 'ai' for i in range(4)])
+    if names is not None:
+        v['names'] = [names[(i + shift) % 4] for i in range(4)]
+    return v
 
 
 def finish_info(state):

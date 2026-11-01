@@ -8,7 +8,7 @@ import os, subprocess, sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(ROOT, "test_output.txt")
-ALL = ["test_app", "test_regressions", "test_backgammon_engine", "test_pasur_engine", "test_hokm_engine", "test_hokm_api"]
+ALL = ["test_app", "test_regressions", "test_backgammon_engine", "test_pasur_engine", "test_hokm_engine", "test_hokm_api", "test_party"]
 
 
 def run(cmd, log):

@@ -638,3 +638,55 @@ dialog::backdrop {background:#121b246e;backdrop-filter:none}
  .game-image {height:195px}.game-meta {font-size:11px}.achievements {grid-template-columns:1fr}
 }
 @media(prefers-reduced-motion:reduce) {*,*::before,*::after {transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+
+/* ---------- Groups: chat, lobby and shared Hokm table ---------- */
+.party-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:8px}
+.party-form h2{display:flex;align-items:center;gap:8px;font-size:18px;margin-bottom:12px}
+.party-form form{display:grid;gap:10px}
+.code-input{text-transform:uppercase;letter-spacing:.18em;text-align:center}
+.party-list{display:grid;gap:12px}
+.party-item{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 20px}
+.party-item h3{font-size:17px}
+.party-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:18px}
+.code-chip{display:inline-block;padding:1px 10px;border-radius:6px;background:var(--accent-soft);color:var(--accent-ink);letter-spacing:.2em;font-size:14px}
+.button.danger-outline{border-color:var(--danger);color:var(--danger)}
+.party-layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:20px;align-items:start}
+.party-main{min-width:0}
+.party-side{display:grid;gap:16px;position:sticky;top:12px;min-width:0}
+.party-members h2,.party-chat h2{display:flex;align-items:center;gap:8px;font-size:16px;margin-bottom:10px}
+.member-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.member-list li{display:flex;align-items:center;gap:9px;min-width:0}
+.member-list strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.member-list .avatar{width:30px;height:30px;font-size:12px}
+.member-list .text-button{margin-inline-start:auto;color:var(--danger)}
+.member-list .badge{margin-inline-start:auto}
+.presence{width:9px;height:9px;border-radius:50%;background:var(--line);flex-shrink:0}
+.presence.on{background:#2e9e6b}
+.chat-log{height:300px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;padding:4px 2px 8px;overscroll-behavior:contain}
+.chat-empty{margin:auto;text-align:center;font-size:12px}
+.msg{max-width:92%;align-self:flex-start;background:var(--accent-soft);border-radius:12px;padding:7px 11px;overflow-wrap:anywhere}
+.msg.mine{align-self:flex-end;background:var(--accent);color:#fff}
+.msg-meta{display:flex;gap:10px;justify-content:space-between;align-items:baseline;font-size:11px;opacity:.85}
+.msg p{font-size:13px;line-height:1.55}
+.msg.sys{align-self:center;max-width:100%;background:none;color:var(--muted);font-size:11px;text-align:center;padding:2px}
+.chat-form{display:flex;gap:8px;margin-top:6px}
+.chat-form input{flex:1;min-width:0}
+.chat-form .button{min-width:46px;padding:10px}
+.table-lobby{display:grid;gap:14px}
+.table-lobby h2{display:flex;align-items:center;gap:8px}
+.teams{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.team-card{border:1px solid var(--line);border-radius:12px;padding:14px;display:grid;gap:10px;align-content:start}
+.team-card h3{font-size:16px}
+.team-1{border-top:4px solid var(--accent)}
+.team-2{border-top:4px solid var(--gold)}
+.seat-slot{display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;background:var(--bg);border:1px dashed var(--line);min-width:0}
+.seat-slot.taken{border-style:solid}
+.seat-slot.mine{border-color:var(--accent);background:var(--accent-soft)}
+.seat-slot>div{min-width:0;flex:1}
+.seat-slot strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}
+.seat-slot small{display:block;color:var(--muted);font-size:11px;line-height:1.4}
+.lobby-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.lobby-controls .form-label{margin:0}
+.lobby-wait{display:flex;gap:8px;align-items:center}
+@media(max-width:1000px){.party-layout{grid-template-columns:1fr}.party-side{position:static}.chat-log{height:240px}}
+@media(max-width:700px){.party-grid,.teams{grid-template-columns:1fr}.party-item{padding:14px}}

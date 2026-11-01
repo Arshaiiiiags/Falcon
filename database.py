@@ -81,6 +81,29 @@ CREATE INDEX IF NOT EXISTS ix_rate_time ON rate_limit_hits(created_at);
 CREATE TABLE IF NOT EXISTS game_states (
   match_id INTEGER PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,
   state_json TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
+-- Groups ("parties"): shared text chat plus one human-vs-human Hokm table per group.
+CREATE TABLE IF NOT EXISTS parties (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
+  owner_id INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS party_members (
+  party_id INTEGER NOT NULL REFERENCES parties(id) ON DELETE CASCADE,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  joined_at TEXT NOT NULL, last_seen REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (party_id, user_id));
+CREATE INDEX IF NOT EXISTS ix_party_members_user ON party_members(user_id);
+CREATE TABLE IF NOT EXISTS party_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  party_id INTEGER NOT NULL REFERENCES parties(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id), username TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL DEFAULT 'text' CHECK (kind IN ('text','system')),
+  body TEXT NOT NULL, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_party_messages ON party_messages(party_id, id);
+CREATE TABLE IF NOT EXISTS party_rooms (
+  party_id INTEGER PRIMARY KEY REFERENCES parties(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'lobby' CHECK (status IN ('lobby','active','finished')),
+  seats_json TEXT NOT NULL, level TEXT NOT NULL DEFAULT 'medium',
+  state_json TEXT, version INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
 """
 
 

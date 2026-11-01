@@ -68,7 +68,7 @@ hasher = PasswordHasher()
 _DUMMY = hasher.hash("dummy-password-for-timing")
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_\u0600-\u06FF\u200c]{3,20}$")
 STATIC_OK = {"index.html", "style.css", "app.js", "games.js", "hokm.js",
-             "icons.js", "i18n.js", "manifest.json", "sw.js", "icon.svg", "icon-192.png", "icon-512.png",
+             "icons.js", "i18n.js", "party.js", "manifest.json", "sw.js", "icon.svg", "icon-192.png", "icon-512.png",
              "club-art.png", "club-font.ttf"}
 
 STATIC_OK.update(f"card-{suit}{rank}.webp" for suit in "CDHS"
@@ -868,6 +868,10 @@ def pasur_resign(mid): return _resign(mid, "pasur")
 @app.post("/api/matches/<int:mid>/hokm/resign")
 @login_required
 def hokm_resign(mid): return _resign(mid, "hokm")
+
+
+import party  # groups, chat and human-vs-human Hokm (see party.py)
+party.register(app, login_required=login_required, body=body, rate_limited=rate_limited, request=request)
 
 
 @app.get("/api/health")
