@@ -346,27 +346,35 @@ def respond_double(state, accept):
     return new
 
 
-def ai_should_double(state):
-    """Pip-count heuristic (NOT measured for strength): double when clearly ahead in the race and
-    nothing of mine is on the bar. easy never doubles; medium needs a bigger lead than hard."""
-    if not can_double(state, AI) or state.get("level") == "easy":
+def ai_should_double_for(state, p):
+    """Pip-count heuristic (NOT measured for strength): seat p doubles when clearly ahead in the race
+    and nothing of its own is on the bar. easy never doubles; medium needs a bigger lead than hard."""
+    if not can_double(state, p) or state.get("level") == "easy":
         return False
     pos = _pos(state)
-    if pos["bar"][AI] > 0:
+    if pos["bar"][p] > 0:
         return False
-    pa, ph = pip(pos, AI), pip(pos, HUMAN)
+    pm, po = pip(pos, p), pip(pos, 1 - p)
     need = 0.12 if state.get("level") == "medium" else 0.08
-    return ph > 0 and (ph - pa) >= max(10, need * ph)
+    return po > 0 and (po - pm) >= max(10, need * po)
 
 
-def ai_takes_double(state):
-    """Pip-count heuristic (NOT measured): take unless the human leads by more than ~12 % of
-    the human's pip count. easy always takes."""
+def ai_takes_double_for(state, p):
+    """Pip-count heuristic (NOT measured): seat p takes unless it trails by more than ~12 % of the
+    doubler's pip count. easy always takes."""
     if state.get("level") == "easy":
         return True
     pos = _pos(state)
-    pa, ph = pip(pos, AI), pip(pos, HUMAN)
-    return (pa - ph) <= 0.12 * max(ph, 1)
+    pm, po = pip(pos, p), pip(pos, 1 - p)
+    return (pm - po) <= 0.12 * max(po, 1)
+
+
+def ai_should_double(state):
+    return ai_should_double_for(state, AI)
+
+
+def ai_takes_double(state):
+    return ai_takes_double_for(state, AI)
 
 
 def human_double(state):
@@ -492,4 +500,89 @@ def public_view(state):
                          and state["turn"] == HUMAN and not pend)
     v["can_double"] = can_double(state, HUMAN)
     v["must_respond"] = bool(pend and pend["by"] == AI and state["winner"] is None)
+    return v
+
+
+# ----------------------------- human-vs-human tables (groups) -----------------------------
+def new_party_game(level="medium", humans=(0,), cube=False, rng=None):
+    """Two-seat table. `humans` are the seats controlled by people; the AI plays an empty seat."""
+    humans = sorted({h for h in humans if type(h) is int and h in (0, 1)})
+    if not humans:
+        raise ValueError("no humans")
+    st = new_game(level, rng, cube=cube)
+    st["humans"], st["party"] = humans, True
+    return st
+
+
+def play_ai_for(state, ai_seats, rng=None):
+    """Plays for every seat in `ai_seats` (including cube decisions) until a person has to act."""
+    rng = rng or SR
+    st = copy.deepcopy(state)
+    st["ai_turns"] = []
+    for _ in range(200):
+        if st["winner"] is not None:
+            break
+        pend = (st.get("cube") or {}).get("pending")
+        if pend:
+            responder = 1 - pend["by"]
+            if responder not in ai_seats:
+                break
+            st = respond_double(st, ai_takes_double_for(st, responder))
+            continue
+        p = st["turn"]
+        if p not in ai_seats:
+            break
+        if _cube_on(st) and st.get("phase") == "pre_roll":
+            if ai_should_double_for(st, p):
+                st = offer_double(st, p)
+                continue
+            st = roll_dice(st, rng)
+            continue
+        plan = ai_plan(st, rng)
+        if not plan:
+            break
+        for s_, d_, die in plan:
+            st = apply_move(st, s_, d_, die, rng)
+    return st
+
+
+def _mp(i):
+    """Mirror a point index (or "bar"/"off") between the two seats' views of the board."""
+    return 23 - i if type(i) is int else i
+
+
+def to_seat_move(seat, src, dst):
+    """A move made by `seat`, written in that seat's own view, translated to real board coordinates."""
+    if seat == 0:
+        return src, dst
+    return _mp(src), _mp(dst)
+
+
+def public_view_for(state, seat, names=None):
+    """What `seat` may see. Seat 1 sees the board mirrored (point i -> 23-i, colours swapped) so the
+    viewer is always the ivory player moving from high to low, exactly like the single-player board."""
+    if type(seat) is not int or seat not in (0, 1):
+        raise ValueError("bad seat")
+    if seat == 0:
+        m = state
+    else:
+        m = dict(state)
+        m["points"] = [-state["points"][23 - i] for i in range(24)]
+        m["bar"], m["off"] = state["bar"][::-1], state["off"][::-1]
+        m["turn"] = 1 - state["turn"]
+        if state["winner"] is not None:
+            m["winner"] = 1 - state["winner"]
+        c = dict(state["cube"])
+        if c.get("owner") is not None:
+            c["owner"] = 1 - c["owner"]
+        if c.get("pending"):
+            c["pending"] = dict(c["pending"], by=1 - c["pending"]["by"])
+        m["cube"] = c
+        m["events"] = [dict(e, player=1 - e["player"]) if "player" in e else e for e in state["events"]]
+    m = dict(m, ai_turns=[])
+    v = public_view(m)
+    names = names or [None, None]
+    v["party"] = True
+    v["names"] = [names[seat], names[1 - seat]]
+    v["kinds"] = ["human" if i in state.get("humans", []) else "ai" for i in (seat, 1 - seat)]
     return v

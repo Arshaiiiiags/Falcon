@@ -1,6 +1,6 @@
 # Persian Game Club
 
-A browser game club with **Pasur, Backgammon, and four-player Hokm**, computer opponents, **groups with text chat and human-vs-human Hokm tables (partners or rivals)**, Persian/English interfaces, saved matches, history, and rankings.
+A browser game club with **Pasur, Backgammon, and four-player Hokm**, computer opponents, **groups with text chat and human-vs-human tables for all three games (Hokm partners or rivals; Pasur and backgammon one-on-one)**, Persian/English interfaces, saved matches, history, and rankings.
 
 **Start here:** this README explains how to run the project. [The project guide](PROJECT_GUIDE.md) explains the architecture, game behavior, APIs, deployment, and remaining work. [Testing](TESTING.md) contains verification commands and results. [Asset credits](ASSETS.md) contains sources, licenses, and artwork prompts.
 
@@ -30,7 +30,7 @@ SQLite tables are created automatically. The default data file is `club.db` in t
 
 ```text
 app.py                    Flask application, auth, routes, match lifecycle
-party.py / party.js       Groups: chat, lobby seats, human-vs-human Hokm
+party.py / party.js       Groups: chat, lobby seats, human-vs-human Hokm, Pasur and backgammon
 database.py              SQLite schema, transactions, migration, backup
 *_engine.py               Independent rules and AI for each game
 index.html, app.js, ... *.webp  Browser code, styles, cards, textures, font, PWA (same folder)
@@ -40,6 +40,7 @@ browser_test.py           Pasur/backgammon browser verification
 browser_hokm_test.py      Complete Hokm browser-match verification
 browser_ui_test.py         Hub responsiveness, locales, themes and accessibility
 browser_party_test.py     Two real browsers: group, chat, seats, shared Hokm table
+browser_party_games_test.py  Two real browsers: shared Pasur and backgammon (with cube) tables
 PRODUCT.md / DESIGN.md     Product context and implemented design system
 smoke_test.py             Production-mode HTTP/concurrency checks
 measure_*_ai.py           Optional AI evaluation scripts

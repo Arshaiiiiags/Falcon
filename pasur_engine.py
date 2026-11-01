@@ -471,3 +471,67 @@ def finish_info(state):
     stats = {"level": state["level"], "rounds": state["round"], "scores": [s0, s1],
              "sur": state["sur_total"], "moves": state["moves_count"], "rules": state["rules"]}
     return result, f"{s0}-{s1}", stats
+
+
+# ----------------------------- human-vs-human tables (groups) -----------------------------
+def new_party_game(level="medium", humans=(0,), rules=None, rng=None):
+    """Two-seat table. `humans` are the seats controlled by people; the AI plays an empty seat."""
+    humans = sorted({h for h in humans if type(h) is int and h in (0, 1)})
+    if not humans:
+        raise ValueError("no humans")
+    st = new_game(level, rules, rng)
+    st["humans"], st["party"] = humans, True
+    return st
+
+
+def play_ai_for(state, ai_seats, rng=None):
+    """Let the AI play every seat in `ai_seats` until a person is on turn (or the game ends)."""
+    st = copy.deepcopy(state)
+    rng = rng or SR
+    for _ in range(1000):
+        p = st["turn"]
+        if st["finished"] or p not in ai_seats:
+            return st
+        a = choose_action(st, p, st["level"], rng)
+        _play(st, p, a["card"], a["capture"], rng)
+    raise RuntimeError("AI loop did not terminate")
+
+
+def apply_party_move(state, seat, card, capture=None, rng=None):
+    """A person's move at `seat`. The event log restarts, as in apply_move."""
+    st = copy.deepcopy(state)
+    st["events"] = []
+    _play(st, seat, card, capture, rng or SR)
+    return st
+
+
+def public_view_for(state, seat, names=None):
+    """What `seat` may see, re-indexed so the viewer is always seat 0 (the browser board needs no
+    seat arithmetic). Never includes the other hand or the deck."""
+    if type(seat) is not int or seat not in (0, 1):
+        raise ValueError("bad seat")
+    flip = seat == 1
+    pair = (lambda a: [a[1], a[0]]) if flip else (lambda a: list(a))
+    side = (lambda x: x if x is None or not flip else 1 - x)
+    m = dict(state)
+    for k in ("scores", "captured", "hands", "sur", "sur_total"):
+        m[k] = pair(state[k])
+    for k in ("turn", "winner", "last_capturer", "leader"):
+        m[k] = side(state[k])
+    m["round_log"] = [dict(r, points=pair(r["points"]), breakdown=pair(r["breakdown"]), scores=pair(r["scores"]))
+                      for r in state["round_log"]]
+    ev = []
+    for e in state["events"]:
+        e = dict(e)
+        if "seat" in e:
+            e["seat"] = side(e["seat"])
+        if "points" in e:
+            e["points"] = pair(e["points"])
+        ev.append(e)
+    m["events"] = ev
+    v = public_view(m)
+    names = names or [None, None]
+    v["party"] = True
+    v["names"] = [names[seat], names[1 - seat]]
+    v["kinds"] = ["human" if i in state.get("humans", []) else "ai" for i in (seat, 1 - seat)]
+    return v

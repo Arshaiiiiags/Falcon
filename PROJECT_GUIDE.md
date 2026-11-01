@@ -11,7 +11,7 @@ Source handoff: **2026-10-29**. Read `README.md` first for installation. Command
 - Per-game statistics, difficulty-specific leaderboards, and server-awarded achievements.
 - Transactional play-coin accounting and a daily refill for depleted accounts.
 - Bundled raster cards, checker sprites, wood/cloth materials, artwork, and a local Persian/Latin font.
-- **Groups:** create a group, share its 6-character code or invite link (`/?join=CODE`), text chat, and a shared Hokm table where real people sit as partners (seats 0+2 / 1+3) or rivals; empty seats are AI. Free: no coins, not in rankings.
+- **Groups:** create a group, share its 6-character code or invite link (`/?join=CODE`), text chat, and one shared table. The owner picks the game: Hokm (4 seats, partners 0+2 / 1+3 or rivals), Pasur (2 seats) or backgammon (2 seats, optional doubling cube). Empty seats are AI. Free: no coins, not in rankings.
 - Installable PWA metadata and a cached public shell. Gameplay requires a server connection.
 
 The frontend was redesigned with Impeccable guidance around the requested clean hub direction: immediate game selection, compact navigation, real game artwork and consistent controls. Product context is recorded in PRODUCT.md; implemented tokens and responsive rules are in DESIGN.md. See REDESIGN.md for the changes and verification.
@@ -26,7 +26,7 @@ This is a buildless Flask/SQLite app. HTML, CSS, and ES modules run directly in 
 | `database.py` | SQLite connections, schema, seed records, transactional access, migration, and online backup |
 | `backgammon_engine.py` | Backgammon legality, dice, optional doubling cube, AI, and browser-safe views |
 | `pasur_engine.py` | Pasur legality, scoring, configurable rules, AI, and browser-safe views |
-| `party.py` | Groups API: membership, chat, lobby seats, human-vs-human Hokm room (blueprint, registered from `app.py`) |
+| `party.py` | Groups API: membership, chat, lobby seats, human-vs-human Hokm / Pasur / backgammon room (blueprint, registered from `app.py`) |
 | `party.js` | Groups screens: list/join, members, lobby, chat log, shared table |
 | `hokm_engine.py` | Partnership Hokm, Hakem/dealing, trick play, scoring, AI, and browser-safe views |
 | `index.html` | Browser entry document |
@@ -53,7 +53,7 @@ AI work runs against a snapshot outside the SQLite writer lock. The server then 
 
 The browser receives a public view, including its own hand and legal actions; hidden opponent hands and undealt cards remain server-side. A match is saved after every successful state-changing action. Refresh returns to the lounge; choose **Resume** in history to reopen the saved game.
 
-SQLite tables cover users/settings, games, matches/players, versioned game states, results, coin transactions, achievements, and shared rate-limit hits. Schema version is **1**. Startup upgrades older supported databases and idempotently seeds all three game types and achievement definitions.
+SQLite tables cover users/settings, games, matches/players, versioned game states, results, coin transactions, achievements, and shared rate-limit hits. Schema version is **2** (version 2 adds `party_rooms.game` and `options_json`; older databases are upgraded in place and existing rooms stay Hokm). Startup upgrades older supported databases and idempotently seeds all three game types and achievement definitions.
 
 ## 4. Games and AI
 
@@ -109,18 +109,21 @@ History dates use YYYY-MM-DD. Limit is 1–100 (default 100); offset defaults to
 
 ### Groups (human multiplayer)
 
-Tables: `parties`, `party_members`, `party_messages`, `party_rooms` (one Hokm room per group; seats, level, state, version). Limits: 8 members per group, 10 groups per user, 500-character messages (control and bidi-override characters removed), 6 messages per 10 s per user.
+Tables: `parties`, `party_members`, `party_messages`, `party_rooms` (one room per group: `game` = `hokm`/`pasur`/`backgammon`, seats, level, `options_json` such as `{"cube":true}`, state, version). Limits: 8 members per group, 10 groups per user, 500-character messages (control and bidi-override characters removed), 6 messages per 10 s per user.
 
 | Endpoint | Purpose |
 | --- | --- |
 | `GET/POST /api/parties`, `POST /api/parties/join` | list mine, create `{name}`, join `{code}` |
 | `GET /api/parties/{id}?after=<msg id>` | poll: members (online flag), room, new chat lines |
 | `POST /api/parties/{id}/messages` / `leave` / `kick` | chat `{text}`, leave, owner removes `{user_id}` |
-| `POST /api/parties/{id}/room/seat` | `{seat: 0-3}` sit (lobby) or `{seat: null}` stand up (AI takes over mid-game) |
-| `POST /api/parties/{id}/room/settings` / `start` / `reset` | owner: AI level, start, back to lobby |
-| `GET /api/parties/{id}/game`, `POST .../game/trump\|move\|continue` | the seated player's view and actions (`version` required) |
+| `POST /api/parties/{id}/room/seat` | `{seat: 0-3}` (Hokm) or `{seat: 0-1}` (Pasur, backgammon) to sit in the lobby, or `{seat: null}` to stand up (AI takes over mid-game) |
+| `POST /api/parties/{id}/room/settings` / `start` / `reset` | owner: `{level, game, cube}` (any subset, lobby only; changing `game` keeps people in the seats that still exist), start, back to lobby |
+| `GET /api/parties/{id}/game` | the seated player's view (`game` names the game; spectators get only the summary in the poll) |
+| `POST .../game/trump\|move\|continue` | Hokm actions (`version` required on every action) |
+| `POST .../game/move` | Pasur `{card, capture:[ids]}`; backgammon `{src, dst, die}` in the viewer's own board orientation |
+| `POST .../game/roll\|double\|respond` | backgammon with the cube: roll, offer a double, answer `{accept: bool}` |
 
-Seats 0 and 2 are one team, 1 and 3 the other, so sitting opposite someone makes you partners. `hokm_engine.public_view_for` re-indexes every view so the viewer is seat 0 (partner = seat 2, team 0 = your team) and never includes other hands; the existing table renderer works unchanged. Ownership passes to the oldest member when the owner leaves; an empty group is deleted.
+Hokm: seats 0 and 2 are one team, 1 and 3 the other, so sitting opposite someone makes you partners. Pasur and backgammon: seats 0 and 1 face each other; every seated player sees themselves as seat 0. For backgammon, seat 1 receives a mirrored board (point `i` becomes `23-i`, colours swapped) and the server mirrors submitted moves back, so one board renderer serves both players. `public_view_for` exists in all three engines and never includes another player's hand, the deck or undealt cards. The AI fills empty seats with `play_ai_for` (Pasur, backgammon) or `play_ai_turns` (Hokm), including cube decisions in backgammon. `hokm_engine.public_view_for` re-indexes every view so the viewer is seat 0 (partner = seat 2, team 0 = your team) and never includes other hands; the existing table renderer works unchanged. Ownership passes to the oldest member when the owner leaves; an empty group is deleted.
 
 ## 6. Coins, rankings, and expiration
 
@@ -185,7 +188,7 @@ Run `python run_tests.py` after rules/backend changes. Browser tests require opt
 - Benchmark AI strength rather than assuming hard beats medium.
 - Physical iPhone/Android touch and installation tests, broader browser coverage, and manual screen-reader checks.
 - Password recovery, scheduled cleanup, and hosting-capacity measurements.
-- Human-versus-human play exists for **Hokm groups only** (below). Pasur and backgammon are still single-player against AI; they would need their engines changed to accept two human seats.
+- Human-versus-human play exists in **groups** for Hokm, Pasur and backgammon. Group games are free and unranked; Pasur uses the default rules and backgammon only the optional cube as table options. Single-player matches still play against the AI only.
 - Group tables have no turn timer: an idle player is replaced by AI when they stand up, leave, or the owner removes them.
 - Groups use polling every 2.5 s (no websockets). Fine for friend groups on one host; very large traffic would call for push updates.
 

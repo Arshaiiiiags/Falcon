@@ -690,3 +690,9 @@ dialog::backdrop {background:#121b246e;backdrop-filter:none}
 .lobby-wait{display:flex;gap:8px;align-items:center}
 @media(max-width:1000px){.party-layout{grid-template-columns:1fr}.party-side{position:static}.chat-log{height:240px}}
 @media(max-width:700px){.party-grid,.teams{grid-template-columns:1fr}.party-item{padding:14px}}
+/* Group tables for Pasur and backgammon */
+.game-picker{display:flex;flex-wrap:wrap;gap:8px;margin:2px 0 6px}
+.lobby-game{margin:2px 0 6px}
+.last-play{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;border:1px solid var(--line);border-radius:12px;background:var(--bg);font-size:13px}
+.last-play .playing-card{width:46px;flex:none}
+.last-play b{color:var(--accent)}

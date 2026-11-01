@@ -27,6 +27,7 @@ ACHIEVEMENTS = {  # key: (fa, en) - awarded only by the server inside finish_mat
 MATCH_STATUSES = ("pending", "active", "completed", "cancelled", "abandoned")
 PATH = os.environ.get("DATABASE_PATH") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "club.db")
 IntegrityError = sqlite3.IntegrityError
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -81,7 +82,7 @@ CREATE INDEX IF NOT EXISTS ix_rate_time ON rate_limit_hits(created_at);
 CREATE TABLE IF NOT EXISTS game_states (
   match_id INTEGER PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,
   state_json TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
--- Groups ("parties"): shared text chat plus one human-vs-human Hokm table per group.
+-- Groups ("parties"): shared text chat plus one human-vs-human table per group (Hokm, Pasur or backgammon).
 CREATE TABLE IF NOT EXISTS parties (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   code TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
@@ -103,7 +104,8 @@ CREATE TABLE IF NOT EXISTS party_rooms (
   party_id INTEGER PRIMARY KEY REFERENCES parties(id) ON DELETE CASCADE,
   status TEXT NOT NULL DEFAULT 'lobby' CHECK (status IN ('lobby','active','finished')),
   seats_json TEXT NOT NULL, level TEXT NOT NULL DEFAULT 'medium',
-  state_json TEXT, version INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
+  state_json TEXT, version INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
+  game TEXT NOT NULL DEFAULT 'hokm', options_json TEXT NOT NULL DEFAULT '{}');
 """
 
 
@@ -159,13 +161,20 @@ def init_db():
         c.execute("BEGIN IMMEDIATE")
         try:
             version = c.execute("PRAGMA user_version").fetchone()[0]
-            if version > 1:
+            if version > SCHEMA_VERSION:
                 raise RuntimeError("Database schema is newer than this application")
             if version < 1:
                 columns = {row[1] for row in c.execute("PRAGMA table_info(users)")}
                 if "auth_version" not in columns:
                     c.execute("ALTER TABLE users ADD COLUMN auth_version INTEGER NOT NULL DEFAULT 0")
                 c.execute("PRAGMA user_version=1")
+            if version < 2:   # groups can host Pasur and backgammon, not only Hokm
+                columns = {row[1] for row in c.execute("PRAGMA table_info(party_rooms)")}
+                if "game" not in columns:
+                    c.execute("ALTER TABLE party_rooms ADD COLUMN game TEXT NOT NULL DEFAULT 'hokm'")
+                if "options_json" not in columns:
+                    c.execute("ALTER TABLE party_rooms ADD COLUMN options_json TEXT NOT NULL DEFAULT '{}'")
+                c.execute("PRAGMA user_version=2")
             c.execute("COMMIT")
         except BaseException:
             if c.in_transaction: c.execute("ROLLBACK")

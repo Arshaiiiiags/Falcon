@@ -89,7 +89,7 @@ function partyView(){
 }
 function scrollLog(force=false){const log=$('#party-log');if(!log)return;const near=log.scrollHeight-log.scrollTop-log.clientHeight<80;if(force||near)log.scrollTop=log.scrollHeight;}
 async function loadParties(){S.party.list=(await api('/parties')).parties;}
-async function openParty(id){const P=S.party;Object.assign(P,{id,cur:null,after:0,msgs:[],game:null,gameVersion:-1,draft:'',html:{}});S.hokmCard=null;await partyPoll(true);}
+async function openParty(id){const P=S.party;Object.assign(P,{id,cur:null,after:0,msgs:[],game:null,gameVersion:-1,draft:'',html:{}});S.hokmCard=null;S.selected=null;S.pasur={card:null,capture:[]};await partyPoll(true);}
 function partyLeaveState(){Object.assign(S.party,{id:null,cur:null,after:0,msgs:[],game:null,gameVersion:-1,draft:'',html:{}});}
 // One poll = members + room + new chat lines (+ my game state when it changed). Partial DOM updates keep the chat draft and focus.
 async function partyPoll(full=false){
@@ -103,7 +103,7 @@ async function partyPoll(full=false){
   if(j.messages.length)P.after=j.messages.at(-1).id;
   const r=j.room;
   if(r.my_seat!==null&&r.status!=='lobby'){
-   if(P.gameVersion!==r.version){try{const g=await api(`/parties/${P.id}/game`);P.game=g;P.gameVersion=g.version;if(S.hokmCard&&!g.state.legal_cards.includes(S.hokmCard))S.hokmCard=null;}catch{}}
+   if(P.gameVersion!==r.version){try{const g=await api(`/parties/${P.id}/game`);P.game=g;P.gameVersion=g.version;if(S.hokmCard&&!(g.state.legal_cards||[]).includes(S.hokmCard))S.hokmCard=null;S.selected=null;S.pasur={card:null,capture:[]};if(g.game==='backgammon'&&g.match_status==='active'&&g.state.bar[0]>0&&g.state.legal_moves.some(m=>m.src==='bar'))S.selected='bar';}catch{}}
   }else{P.game=null;P.gameVersion=-1;}
   if(full||S.view!=='party')render();else updatePartyPanels(mineBefore);
  }finally{P.polling=false;}
@@ -118,7 +118,7 @@ function updatePartyPanels(prevLast){
   P.html[id]=html;
   if(had){const same=[...el.querySelectorAll('[data-action]')].find(n=>n.dataset.action===had);same?.focus({preventScroll:true});}}
 }
-async function partyGame(kind,data={}){const P=S.party;const g=await api(`/parties/${P.id}/game/${kind}`,{method:'POST',data:{...data,version:P.game.version}});P.game=g;P.gameVersion=g.version;S.hokmCard=null;await partyPoll();}
+async function partyGame(kind,data={}){const P=S.party;const g=await api(`/parties/${P.id}/game/${kind}`,{method:'POST',data:{...data,version:P.game.version}});P.game=g;P.gameVersion=g.version;S.hokmCard=null;S.selected=null;S.pasur={card:null,capture:[]};await partyPoll();}
 async function partyRoomPost(path,data){await api(`/parties/${S.party.id}/room/${path}`,{method:'POST',data});S.party.gameVersion=-1;await partyPoll();}
 async function sendChat(){
  const P=S.party,input=$('#chat-input');if(!input||P.sending)return;const text=input.value.trim();if(!text)return;
@@ -142,6 +142,10 @@ function setup(game,match=null){if(!S.user){showAuth('register');return;}S.start
 async function navigate(view){S.menu=false;S.view=view;if(view==='party'){partyLeaveState();if(S.user)await loadParties();}if(view==='rankings'&&S.user)await loadRankings();if(view==='history'&&S.user)await loadHistory();render();window.scrollTo({top:0,behavior:'instant'});$('#main').focus({preventScroll:true});}
 function gamePath(){return `/matches/${S.game.match_id}/${S.gameType==='backgammon'?'bg':S.gameType}`;}
 async function refreshGame(){S.game=await api(gamePath());S.selected=null;S.pasur={card:null,capture:[]};S.hokmCard=null;}
+// Single-player screens act on /matches/{id}; a group table acts on /parties/{id}/game.
+const inParty=()=>S.view==='party'&&S.party.id;
+const game=()=>inParty()?S.party.game:S.game;
+const act=(kind,data={})=>inParty()?partyGame(kind,data):gameAction(kind,data);
 async function gameAction(action,data={}){S.game=await api(gamePath()+'/'+action,{method:'POST',data:{...data,version:S.game.version}});S.selected=null;S.pasur={card:null,capture:[]};S.hokmCard=null;if(S.game.match_status!=='active')await dashboard();}
 async function resume(mid){const m=S.history.find(m=>m.id===mid);if(!m)return;if(m.status==='pending'){setup(m.game,m);return;}S.gameType=m.game;try{S.game=await api(`/matches/${mid}/${m.game==='backgammon'?'bg':m.game}`);}catch(e){if(e.code==='not_found'&&m.status==='active'){setup(m.game,m);return;}throw e;}S.selected=null;S.pasur={card:null,capture:[]};S.hokmCard=null;await navigate('game');}
 async function savePreferences(){write('pgc_lang',S.lang);write('pgc_theme',S.theme);if(S.user){await api('/settings',{method:'PUT',data:{language:S.lang,theme:S.theme}});S.user.language=S.lang;S.user.theme=S.theme;}}
@@ -162,13 +166,13 @@ const actions={
  'refresh-game':()=>task(()=>refreshGame()),
  'resign':()=>openModal(`${modalHead('resignTitle')}<p class="modal-copy">${t('resignCopy')}</p><div class="button-row"><button class="button danger" data-action="confirm-resign">${t('confirmResign')}</button><button class="button" data-action="modal-close">${t('cancel')}</button></div>`),
  'confirm-resign':()=>task(async()=>{await api(gamePath()+'/resign',{method:'POST'});modal.close();await refreshGame();await dashboard();}),
- 'bg-roll':()=>task(()=>gameAction('roll')),'bg-double':()=>task(()=>gameAction('double')),'cube-accept':()=>task(()=>gameAction('respond',{accept:true})),'cube-decline':()=>task(()=>gameAction('respond',{accept:false})),
- 'bg-point':el=>{const point=el.dataset.point,st=S.game.state;const candidate=st.legal_moves.filter(m=>String(m.src)===String(S.selected)&&String(m.dst)===point).sort((a,b)=>a.die-b.die)[0];if(S.selected!==null&&candidate){task(()=>gameAction('move',candidate));return;}S.selected=st.legal_moves.some(m=>String(m.src)===point)?(String(S.selected)===point?null:point):null;render();},
+ 'bg-roll':()=>task(()=>act('roll')),'bg-double':()=>task(()=>act('double')),'cube-accept':()=>task(()=>act('respond',{accept:true})),'cube-decline':()=>task(()=>act('respond',{accept:false})),
+ 'bg-point':el=>{const point=el.dataset.point,st=game().state;const candidate=st.legal_moves.filter(m=>String(m.src)===String(S.selected)&&String(m.dst)===point).sort((a,b)=>a.die-b.die)[0];if(S.selected!==null&&candidate){task(()=>act('move',candidate));return;}S.selected=st.legal_moves.some(m=>String(m.src)===point)?(String(S.selected)===point?null:point):null;render();},
  'hand-card':el=>{S.pasur={card:S.pasur.card===el.dataset.card?null:el.dataset.card,capture:[]};render();},
  'table-card':el=>{const c=el.dataset.card;if(!S.pasur.card)return;S.pasur.capture=S.pasur.capture.includes(c)?S.pasur.capture.filter(x=>x!==c):[...S.pasur.capture,c];render();},
  'clear-selection':()=>{S.pasur={card:null,capture:[]};render();},
- 'pasur-suggest':()=>{const options=S.game.state.legal_actions.filter(a=>a.card===S.pasur.card&&a.capture.length);if(!options.length){toast(t('noCapture'));return;}const current=options.findIndex(a=>a.capture.length===S.pasur.capture.length&&a.capture.every(c=>S.pasur.capture.includes(c)));S.pasur.capture=[...options[(current+1)%options.length].capture];render();},
- 'pasur-play':()=>task(()=>gameAction('move',{card:S.pasur.card,capture:S.pasur.capture})),
+ 'pasur-suggest':()=>{const options=game().state.legal_actions.filter(a=>a.card===S.pasur.card&&a.capture.length);if(!options.length){toast(t('noCapture'));return;}const current=options.findIndex(a=>a.capture.length===S.pasur.capture.length&&a.capture.every(c=>S.pasur.capture.includes(c)));S.pasur.capture=[...options[(current+1)%options.length].capture];render();},
+ 'pasur-play':()=>task(()=>act('move',{card:S.pasur.card,capture:S.pasur.capture})),
  'hokm-card':el=>{S.hokmCard=S.hokmCard===el.dataset.card?null:el.dataset.card;render();},
  'hokm-play':()=>task(()=>S.view==='party'?partyGame('move',{card:S.hokmCard}):gameAction('move',{card:S.hokmCard})),
  'hokm-trump':el=>task(()=>S.view==='party'?partyGame('trump',{suit:el.dataset.suit}):gameAction('trump',{suit:el.dataset.suit})),
@@ -177,6 +181,7 @@ const actions={
  'party-back':()=>task(()=>navigate('party')),
  'party-copy-code':()=>copyText(S.party.cur.party.code),
  'party-copy-link':()=>copyText(`${location.origin}/?join=${S.party.cur.party.code}`),
+ 'party-game':el=>task(()=>partyRoomPost('settings',{game:el.dataset.game})),
  'party-sit':el=>task(()=>partyRoomPost('seat',{seat:Number(el.dataset.seat)})),
  'party-stand':()=>task(()=>partyRoomPost('seat',{seat:null})),
  'party-start':()=>task(()=>partyRoomPost('start')),
@@ -192,7 +197,7 @@ const actions={
  'install':()=>task(async()=>{if(S.installPrompt){await S.installPrompt.prompt();await S.installPrompt.userChoice;S.installPrompt=null;}})
 };
 document.addEventListener('click',event=>{const el=event.target.closest('[data-action]');if(!el||el.disabled||S.busy&&el.dataset.action!=='menu-close')return;actions[el.dataset.action]?.(el);});
-document.addEventListener('change',event=>{const key=event.target.dataset.filter;if(!key)return;task(async()=>{if(key==='partyLevel'){await partyRoomPost('settings',{level:event.target.value});return;}if(key==='language'){S.lang=event.target.value;await savePreferences();}else{S[key]=event.target.value;if(key.startsWith('rank'))await loadRankings();else await loadHistory();}});});
+document.addEventListener('change',event=>{const key=event.target.dataset.filter;if(!key)return;task(async()=>{if(key==='partyLevel'){await partyRoomPost('settings',{level:event.target.value});return;}if(key==='partyCube'){await partyRoomPost('settings',{cube:event.target.checked});return;}if(key==='language'){S.lang=event.target.value;await savePreferences();}else{S[key]=event.target.value;if(key.startsWith('rank'))await loadRankings();else await loadHistory();}});});
 document.addEventListener('submit',event=>{const form=event.target,kind=form.dataset.form;if(!kind)return;event.preventDefault();if(kind==='chat'){sendChat();return;}if(!form.reportValidity())return;const data=Object.fromEntries(new FormData(form));task(async()=>{
  if(kind==='login'||kind==='register'){const j=await api('/'+kind,{method:'POST',data});S.user=j.user;if(kind==='login'){S.lang=j.user.language;S.theme=j.user.theme;}else await savePreferences();await dashboard();modal.close();S.view='lounge';await consumeJoin();}
  else if(kind==='party-create'){const j=await api('/parties',{method:'POST',data});await openParty(j.party.id);}

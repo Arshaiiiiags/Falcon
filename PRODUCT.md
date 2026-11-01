@@ -14,7 +14,7 @@ A small game hub for Hokm, backgammon and Pasur. Let people choose a game, set A
 ## Capabilities and Constraints
 Flask/SQLite backend and framework-free JavaScript frontend. Games are server authoritative. Hokm is one human and three AI players, in two teams. Existing rules, security, accounting, saved games, APIs, five selectable themes, Persian/RTL and English/LTR must remain functional.
 
-An account starts with 100 virtual coins. A whole match costs five coins. These are not real-money stakes. AI strength is not benchmarked as expert level. No networked human multiplayer is implemented.
+An account starts with 100 virtual coins. A whole match costs five coins. These are not real-money stakes. AI strength is not benchmarked as expert level. Human-vs-human play exists only inside groups (Hokm with 4 seats, Pasur and backgammon with 2); every group game is free and unranked, and empty seats are played by the AI.
 
 ## Brand Commitments
 The user requested clean online web game hub styling, rejected generic AI-looking marketing UI, requested real graphical assets, and accepted Papergames/Poki/Lichess as useful reference directions before requesting this redesign. Keep the Persian Game Club name and bundled card, board, checker and font assets. The current request explicitly replaces the old frontend appearance.

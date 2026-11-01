@@ -1,9 +1,9 @@
-"""Groups ("parties"): shared text chat plus one human-vs-human Hokm table per group.
+"""Groups ("parties"): shared text chat plus one human-vs-human table per group.
 
-Players join a group with a short code, chat, and sit at the group's Hokm table. Two people on
-the same team (seats 0+2 or 1+3) are partners; people on different teams are rivals. Empty seats
-are played by the AI. The server stays authoritative: hands, turns, legality and scores never
-come from the browser. Clients poll /api/parties/<id> (no websockets, so it works behind the
+Players join a group with a short code, chat, and sit at the group's table. The owner picks the game:
+four-seat Hokm (people on the same team, seats 0+2 or 1+3, are partners), or two-seat Pasur or
+backgammon. Empty seats are played by the AI. The server stays authoritative: hands, dice, turns,
+legality and scores never come from the browser. Clients poll /api/parties/<id> (no websockets, so it works behind the
 existing Gunicorn/SQLite deployment).
 
 Group games are free: no coins are charged and they do not appear in AI rankings.
@@ -15,6 +15,8 @@ from flask import Blueprint, jsonify, session
 
 import database as db
 import hokm_engine as hk
+import pasur_engine as ps
+import backgammon_engine as bg
 
 bp = Blueprint("party", __name__)
 
@@ -25,6 +27,8 @@ MAX_NAME = 30
 ONLINE_WINDOW = 15            # seconds since last poll = "online"
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O/1/I
 KEEP_MESSAGES = 300
+GAMES = {"hokm": 4, "pasur": 2, "backgammon": 2}        # game -> number of seats
+ILLEGAL = (hk.IllegalMove, ps.IllegalMove, bg.IllegalMove)
 _CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 
 # Injected by app.register_party() so this module never imports app (avoids a circular import).
@@ -78,6 +82,36 @@ def _seats(room):
     return json.loads(room["seats_json"])
 
 
+def _game(room):
+    return room["game"]
+
+
+def _options(room):
+    return json.loads(room["options_json"] or "{}")
+
+
+def _finished(game, st):
+    return bool(st["winner"] is not None or st.get("draw")) if game == "backgammon" else bool(st["finished"])
+
+
+def _advance(game, st):
+    """Let the AI play every empty seat until a person has to act."""
+    ai = [i for i in range(GAMES[game]) if i not in st["humans"]]
+    if game == "hokm":
+        return hk.play_ai_turns(st)
+    return (ps if game == "pasur" else bg).play_ai_for(st, ai)
+
+
+def _new_state(game, level, humans, options):
+    if game == "hokm":
+        st = hk.new_party_game(level, humans)
+    elif game == "pasur":
+        st = ps.new_party_game(level, humans)
+    else:
+        st = bg.new_party_game(level, humans, cube=bool(options.get("cube")))
+    return _advance(game, st)
+
+
 def _save_room(s, pid, seats=None, status=None, state=None, clear_state=False, bump=True):
     sets, args = ["updated_at=?"], [db.now()]
     if seats is not None:
@@ -119,21 +153,25 @@ def _drop_seat(s, pid, uid):
     st = json.loads(room["state_json"])
     st["humans"] = [h for h in st["humans"] if h != idx]
     if not st["humans"]:
-        _save_room(s, pid, seats=[None] * 4, status="lobby", clear_state=True)
+        _save_room(s, pid, seats=[None] * GAMES[_game(room)], status="lobby", clear_state=True)
         return
-    st = hk.play_ai_turns(st)
-    _save_room(s, pid, seats=seats, status="finished" if st["finished"] else "active", state=st)
+    st = _advance(_game(room), st)
+    _save_room(s, pid, seats=seats, status="finished" if _finished(_game(room), st) else "active", state=st)
 
 
 # ------------------------------- payloads -------------------------------
 def _room_out(room, uid):
     seats = _seats(room)
-    out = dict(status=room["status"], level=room["level"], version=room["version"],
-               seats=seats, my_seat=_my_seat(seats, uid))
+    game = _game(room)
+    out = dict(status=room["status"], level=room["level"], version=room["version"], game=game,
+               options=_options(room), seats=seats, my_seat=_my_seat(seats, uid))
     if room["state_json"]:
         st = json.loads(room["state_json"])
-        out.update(scores=st["scores"], round=st["round"], target=st["target_score"],
-                   winner=st["winner"])
+        if game == "backgammon":
+            out.update(off=st["off"], winner=st["winner"])
+        else:
+            target = st["target_score"] if game == "hokm" else st["rules"]["target_score"]
+            out.update(scores=st["scores"], round=st["round"], target=target, winner=st["winner"])
     return out
 
 
@@ -288,18 +326,18 @@ def _kick(pid):
     return jsonify(ok=True)
 
 
-# ------------------------------- the Hokm table -------------------------------
+# ------------------------------- the table -------------------------------
 def _room_seat(pid):
     uid = _uid()
     d = _dep["body"]()
     want = d.get("seat")
-    if want is not None and (type(want) is not int or want not in range(4)):
-        return err("invalid_input", 400)
     with db.session_scope() as s:
         party, e = _guard(s, pid)
         if e: return e
         room = _room(s, pid)
         seats = _seats(room)
+        if want is not None and (type(want) is not int or want not in range(GAMES[_game(room)])):
+            return err("invalid_input", 400)
         if want is None:                       # stand up (an AI covers the seat in a running game)
             _drop_seat(s, pid, uid)
             return jsonify(ok=True)
@@ -316,17 +354,32 @@ def _room_seat(pid):
 
 
 def _room_settings(pid):
-    level = _dep["body"]().get("level")
-    if level not in hk.LEVELS:
+    """Owner, lobby only: AI level, which game the table plays, and the backgammon doubling cube."""
+    d = _dep["body"]()
+    level, game, cube = d.get("level"), d.get("game"), d.get("cube")
+    if level is None and game is None and cube is None:
+        return err("invalid_input", 400)
+    if (level is not None and level not in hk.LEVELS) or (game is not None and game not in GAMES) \
+            or (cube is not None and type(cube) is not bool):
         return err("invalid_input", 400)
     with db.session_scope() as s:
         party, e = _guard(s, pid)
         if e: return e
         if party["owner_id"] != _uid():
             return err("forbidden", 403)
-        if _room(s, pid)["status"] != "lobby":
+        room = _room(s, pid)
+        if room["status"] != "lobby":
             return err("invalid_state", 409)
-        s.execute("UPDATE party_rooms SET level=?, version=version+1 WHERE party_id=?", (level, pid))
+        seats, options = _seats(room), _options(room)
+        if game is not None and game != _game(room):
+            n = GAMES[game]                      # people keep their place when the new table has room for them
+            seats = (seats + [None] * n)[:n]
+        if cube is not None:
+            options["cube"] = cube
+        s.execute("UPDATE party_rooms SET level=?, game=?, seats_json=?, options_json=?, version=version+1, "
+                  "updated_at=? WHERE party_id=?",
+                  (level or room["level"], game or _game(room), json.dumps(seats), json.dumps(options),
+                   db.now(), pid))
     return jsonify(ok=True)
 
 
@@ -342,16 +395,17 @@ def _room_start(pid):
         humans = [i for i, x in enumerate(_seats(room)) if x]
         if not humans:
             return err("no_players", 409)
-        level = room["level"]
-    st = hk.play_ai_turns(hk.new_party_game(level, humans))       # AI search runs outside the writer lock
+        level, game, options, version = room["level"], _game(room), _options(room), room["version"]
+    st = _new_state(game, level, humans, options)       # AI search runs outside the writer lock
     with db.session_scope() as s:
         party, e = _guard(s, pid)
         if e: return e
         room = _room(s, pid)
-        if room["status"] != "lobby" or [i for i, x in enumerate(_seats(room)) if x] != humans:
+        if (room["status"] != "lobby" or room["version"] != version
+                or [i for i, x in enumerate(_seats(room)) if x] != humans):
             return err("state_conflict", 409)
-        _save_room(s, pid, status="active", state=st)
-        _say(s, pid, "game_start", _uid(), _username(s, _uid()))
+        _save_room(s, pid, status="finished" if _finished(game, st) else "active", state=st)
+        _say(s, pid, "game_start" if game == "hokm" else f"game_start_{game}", _uid(), _username(s, _uid()))
     return jsonify(ok=True), 201
 
 
@@ -371,10 +425,15 @@ def _room_reset(pid):
 
 def _view(room, seat):
     seats = _seats(room)
+    game = _game(room)
     st = json.loads(room["state_json"])
     names = [x["name"] if x else None for x in seats]
+    if game == "hokm":
+        view = hk.public_view_for(st, seat, names)
+    else:
+        view = (ps if game == "pasur" else bg).public_view_for(st, seat, names)
     return dict(version=room["version"], match_status="active" if room["status"] == "active" else "completed",
-                my_seat=seat, state=hk.public_view_for(st, seat, names))
+                my_seat=seat, game=game, state=view)
 
 
 def _game_get(pid):
@@ -386,6 +445,46 @@ def _game_get(pid):
         if room["status"] == "lobby" or seat is None or not room["state_json"]:
             return err("invalid_state", 409)
         return jsonify(_view(room, seat))
+
+
+KINDS = {"hokm": ("trump", "move", "continue"), "pasur": ("move",),
+         "backgammon": ("move", "roll", "double", "respond")}
+
+
+def _apply(game, kind, st, seat, d):
+    """One person's action. Raises ILLEGAL for rule violations and returns an error response for
+    out-of-turn calls; otherwise returns the new state (before the AI replies)."""
+    if game == "hokm":
+        if kind == "trump":
+            if st["phase"] != "choose_trump" or st["hakem"] != seat:
+                return err("not_your_turn", 409)
+            return hk.choose_trump(st, seat, d.get("suit"))
+        if kind == "move":
+            if st["phase"] != "play" or st["turn"] != seat:
+                return err("not_your_turn", 409)
+            return hk.apply_move(st, d.get("card"), seat)
+        return hk.continue_game(st)
+    if game == "pasur":
+        if st["turn"] != seat or st["finished"]:
+            return err("not_your_turn", 409)
+        return ps.apply_party_move(st, seat, d.get("card"), d.get("capture"))
+    # backgammon
+    st = dict(st, events=[])
+    pend = (st.get("cube") or {}).get("pending")
+    if kind == "respond":
+        if not pend or pend["by"] == seat:
+            return err("not_your_turn", 409)
+        if type(d.get("accept")) is not bool:
+            return err("invalid_input", 400)
+        return bg.respond_double(st, d["accept"])
+    if st["turn"] != seat or st["winner"] is not None or pend:
+        return err("not_your_turn", 409)
+    if kind == "roll":
+        return bg.roll_dice(st)
+    if kind == "double":
+        return bg.offer_double(st, seat)
+    src, dst = bg.to_seat_move(seat, d.get("src"), d.get("dst"))       # seat 1 sees a mirrored board
+    return bg.apply_move(st, src, dst, d.get("die"))
 
 
 def _game_action(pid, kind):
@@ -400,32 +499,29 @@ def _game_action(pid, kind):
         seat = _my_seat(_seats(room), uid)
         if room["status"] != "active" or seat is None or not room["state_json"]:
             return err("invalid_state", 409)
+        if kind not in KINDS[_game(room)]:
+            return err("invalid_input", 400)
         if room["version"] != d["version"]:
             return err("state_conflict", 409)
+        game = _game(room)
         st = json.loads(room["state_json"])
     try:
-        if kind == "trump":
-            if st["phase"] != "choose_trump" or st["hakem"] != seat:
-                return err("not_your_turn", 409)
-            st = hk.choose_trump(st, seat, d.get("suit"))
-        elif kind == "move":
-            if st["phase"] != "play" or st["turn"] != seat:
-                return err("not_your_turn", 409)
-            st = hk.apply_move(st, d.get("card"), seat)
-        else:
-            st = hk.continue_game(st)
-        st = hk.play_ai_turns(st)
-    except hk.IllegalMove:
+        st = _apply(game, kind, st, seat, d)
+        if not isinstance(st, dict):          # an error response from _apply
+            return st
+        st = _advance(game, st)
+    except ILLEGAL:
         return err("illegal_move", 400)
     with db.session_scope() as s:
         party, e = _guard(s, pid)
         if e: return e
+        done = _finished(game, st)
         r = s.execute("UPDATE party_rooms SET state_json=?, version=version+1, updated_at=?, status=? "
                       "WHERE party_id=? AND version=? AND status='active'",
-                      (json.dumps(st), db.now(), "finished" if st["finished"] else "active", pid, d["version"]))
+                      (json.dumps(st), db.now(), "finished" if done else "active", pid, d["version"]))
         if r.rowcount != 1:
             return err("state_conflict", 409)
-        if st["finished"]:
+        if done:
             _say(s, pid, "game_over")
         return jsonify(_view(_room(s, pid), seat))
 
@@ -446,7 +542,7 @@ def register(app, *, login_required, body, rate_limited, request):
     r("/api/parties/<int:pid>/room/start", _room_start, ["POST"])
     r("/api/parties/<int:pid>/room/reset", _room_reset, ["POST"])
     r("/api/parties/<int:pid>/game", _game_get, ["GET"])
-    for kind in ("trump", "move", "continue"):
+    for kind in ("trump", "move", "continue", "roll", "double", "respond"):
         bp.add_url_rule(f"/api/parties/<int:pid>/game/{kind}", f"game_{kind}",
                         login_required(lambda pid, kind=kind: _game_action(pid, kind)), methods=["POST"])
     app.register_blueprint(bp)
